@@ -1,0 +1,202 @@
+`timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// Company: 
+// Engineer: 
+// 
+// Create Date: 2022/06/25 10:46:43
+// Design Name: 
+// Module Name: Handshakes
+// Project Name: 
+// Target Devices: 
+// Tool Versions: 
+// Description: 
+// 
+// Dependencies: 
+// 
+// Revision:
+// Revision 0.01 - File Created
+// Additional Comments:
+// 
+//////////////////////////////////////////////////////////////////////////////////
+module Handshakes(   
+     input clk,
+     input rst,
+     //sender
+     input [9:0] data_in,
+     input valid_i,
+     output  ready_i,
+     output reg valid_ireg,
+     //receiver
+     input ready_o,
+     output  valid_o,
+     output [9:0]data_out,   
+     output reg ready_oreg
+    );
+    
+//pipe_num=3
+reg valid_1;
+wire ready_1;
+reg [9:0]data_1;
+
+reg valid_2;
+wire ready_2;
+reg [9:0]data_2;
+
+reg valid_3;
+wire ready_3;
+reg [9:0]data_3;
+
+/*逐级反压 ：
+  当下一级ready_o=1（准备好接受数据）或者valid_o=0（无有效数据，有空闲）时，
+  上一级收到的ready_i=1(可以准备发送数据)；
+  反之，当下一级 ready_o=0（无法接受数据）且valid_o=1(接受端有数据，忙碌状态)时，
+  上一级收到的ready_i=0（即使valid_i=1也无法发送数据）
+*/
+/*逐级反压 ：
+   当receiver忙碌时（ready_i=0），开始逐级反压，空闲的pipe继续工作，
+   若不空闲，则保留上一个clk接收的数据，实现了无气泡传输，且不会丢失数据
+*/
+ assign ready_i = ~valid_1 || ready_1;
+ assign ready_1 = ~valid_2 || ready_2;
+ assign ready_2 = ~valid_3 || ready_3;
+ assign ready_3 = ~valid_o || ready_oreg;
+  
+  always@(posedge clk) 
+     begin   
+     //对输入valid_i和ready_o打一拍同步时序
+     valid_ireg <= valid_i;
+     ready_oreg <= ready_o;
+     end
+  //pipe 1  
+  always@(posedge clk)  begin
+    if(!rst)   begin
+        //若复位端为0，则不传输数据
+        valid_1 <=1'b0;  
+     end
+    else if(ready_i) 
+        //复位端不为0且由下一级反馈的回的ready_i=1时，下一级可以接收数据  
+        valid_1 <= valid_ireg;
+    end
+    
+  always@(posedge clk) begin
+    if(valid_ireg & ready_i)
+        data_1 <=data_in;  
+  end
+  
+  //pipe 2
+  always@(posedge clk) begin
+    if(!rst)
+        valid_2 <= 1'b0;
+     else if(ready_1)
+        valid_2 <=valid_1;
+  end 
+  
+  always@(posedge clk) begin
+    if(valid_1 & ready_1)     
+        data_2 <=data_1 ;
+  end
+  
+  //pipe 3
+  always@(posedge clk) begin
+    if(!rst)
+        valid_3 <= 1'b0;
+     else if(ready_2)
+        valid_3 <=valid_2;
+  end 
+  
+  always@(posedge clk) begin
+    if(valid_2 & ready_2)     
+        data_3 <=data_2 ;
+  end           
+ 
+ //receiver
+ assign valid_o = valid_3;
+ assign data_out = data_3;
+         
+    
+endmodule
+
+
+
+
+
+
+// test_simu
+`timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// Company: 
+// Engineer: 
+// 
+// Create Date: 2022/06/26 17:25:55
+// Design Name: 
+// Module Name: tb_handshakes
+// Project Name: 
+// Target Devices: 
+// Tool Versions: 
+// Description: 
+// 
+// Dependencies: 
+// 
+// Revision:
+// Revision 0.01 - File Created
+// Additional Comments:
+// 
+//////////////////////////////////////////////////////////////////////////////////
+
+
+module tb_handshakes();
+     integer count;
+     reg clk;
+     reg rst;
+     //sender
+     reg [9:0] data_in;
+     reg valid_i;
+     wire  ready_i;
+     //receiver
+     reg ready_o;
+     wire  valid_o;
+     wire [9:0]data_out;
+     wire valid_ireg;
+     wire ready_oreg;
+     
+initial begin clk =1'b1;          //时钟初始化
+              #1 rst = 1'b0;
+              #5 rst = 1'b1;      //设置复位信号
+              end 
+              
+initial begin  #2 ready_o = 1'b1;  //ready-before-valid 握手方式
+               #12 valid_i = 1'b1; //ready valid均为异步信号
+               end
+
+initial begin  #112 ready_o = 1'b0; // receiver 停止接收
+               #21  ready_o = 1'b1;     
+               end
+               
+initial begin  #303 valid_i = 1'b0; // sender 停止发送
+               #36  valid_i = 1'b1; 
+               end              
+always #5 clk=~clk;                 //时钟信号 
+
+
+always@(posedge clk & valid_ireg & valid_i) //输入数据
+        if(ready_i==1'b1)              
+            data_in <= {$random}%25;
+                  
+       
+ Handshakes hand (
+       .clk(clk),
+       .rst(rst),
+       .ready_o(ready_o),
+       .ready_oreg(ready_oreg),
+       .valid_i(valid_i),
+       .valid_ireg(valid_ireg),
+       .data_in(data_in),           
+       .ready_i(ready_i),         
+       .valid_o(valid_o),
+       .data_out(data_out)
+      
+     
+ 
+ );      
+
+endmodule
